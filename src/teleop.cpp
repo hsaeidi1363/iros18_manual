@@ -4,10 +4,11 @@
 #include<geometry_msgs/Twist.h>
 #include<geometry_msgs/PoseStamped.h>
 #include<sensor_msgs/JointState.h>
-//#include "Eigen/Core"
 #include<trajectory_msgs/JointTrajectory.h> 
 #include<trajectory_msgs/JointTrajectoryPoint.h> 
 #include<kdl/chain.hpp>
+#include<std_msgs/UInt8.h>
+
 
 #include <kdl/chainfksolver.hpp>
 #include <kdl/chainiksolver.hpp>
@@ -246,11 +247,14 @@ int main(int argc, char * argv[]){
         
         // defining the puilsher that accepts joint position commands and applies them to the simulator
 	std::string command_topic = "iiwa/PositionJointInterface_trajectory_controller/command";
-//	if(semi_auto){
-//		command_topic = "iiwa/manual/command";
-//	}
+
+
 	ros::Publisher cmd_pub = nh_.advertise<trajectory_msgs::JointTrajectory>(command_topic,10);
+
+
+	ros::Publisher control_mode_pub = nh_.advertise<std_msgs::UInt8>("iiwa/control_mode",10);
         
+       
 	ros::Publisher dbg_pub = nh_.advertise<geometry_msgs::Twist>("/hapticdbg",10);
 
 	
@@ -294,6 +298,9 @@ int main(int argc, char * argv[]){
         bool kinematics_status;
         bool start_loc_available = false;
         bool all_zero = true;
+
+	std_msgs::UInt8 control_mode;
+
         while (ros::ok()){
 		if (initialized){
 			// update the joint positions with the most recent readings from the joints
@@ -359,7 +366,13 @@ int main(int argc, char * argv[]){
                         }
                                         
                 }
+		if(autonomous_mode)
+			control_mode.data = 0;
+		else
+			control_mode.data = 1;
                 dbg_pub.publish(dbg);
+		control_mode_pub.publish(control_mode);
+
                 calc_center_force();
 		force_pub.publish(centering_force);
 		ros::spinOnce();
