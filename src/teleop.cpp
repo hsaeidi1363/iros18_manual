@@ -25,10 +25,10 @@ double x_d = 0.0;
 double y_d = 0.0;
 double z_d = 0.0;
 
-double kp_x = 50.0;
-double kd_x = 200.0;
-double kp_y = 50.0;
-double kd_y = 200.0;
+double kp_x = 100.0;
+double kd_x = 300.0;
+double kp_y = 100.0;
+double kd_y = 300.0;
 double kp_z = 150.0;
 double kd_z = 600.0;
 
@@ -208,9 +208,6 @@ void calc_center_force(void){
 		centering_force.force.y += centering_force_prev.force.y;
 		centering_force.force.z += centering_force_prev.force.z;
 	}
-	dbg.linear.x = e_x;
-	dbg.linear.y = de_x;
-	dbg.linear.z = centering_force.force.x;
 	e_x_prev = e_x;
 	e_y_prev = e_y;
 	e_z_prev = e_z;
@@ -343,7 +340,7 @@ int main(int argc, char * argv[]){
   
                                 ref.linear.x = xyz.linear.x - pos.pose.position.y;
                                 ref.linear.y = xyz.linear.y + pos.pose.position.x;
-                                ref.linear.z = xyz.linear.z + pos.pose.position.z*0.2;
+                                ref.linear.z = xyz.linear.z + pos.pose.position.z*0.0;
                                 //keep the same orientation
                                 ref.angular.x = xyz.angular.x;
                                 ref.angular.y = xyz.angular.y;
@@ -366,7 +363,13 @@ int main(int argc, char * argv[]){
 					y_d = -(current_cartpos.p[0] -xyz.linear.x);
 					x_d = current_cartpos.p[1]-xyz.linear.y;
 					z_d = current_cartpos.p[2]-xyz.linear.z;
-				}
+                                        dbg.linear.x = x_d;
+                                        dbg.linear.y = pos.pose.position.x;
+                                        dbg.linear.z = ref.linear.y;
+                                        dbg.angular.x = xyz.linear.y;
+                                        dbg.angular.y = current_cartpos.p[1];
+                                    
+                                }
                                 cmd_pub.publish(joint_cmd);
                             }
                         }
