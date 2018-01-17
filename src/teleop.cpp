@@ -8,7 +8,7 @@
 #include<trajectory_msgs/JointTrajectoryPoint.h> 
 #include<kdl/chain.hpp>
 #include<std_msgs/UInt8.h>
-
+#include<std_msgs/Bool.h>
 
 #include <kdl/chainfksolver.hpp>
 #include <kdl/chainiksolver.hpp>
@@ -18,19 +18,19 @@
 #include <kdl/chainjnttojacsolver.hpp>
 
 
-//TODO: 
-// finish sending commands to the robot in the current working condition
-// enable switching between different modes
 
-#define KP 50.0
-#define KD 200.0
 
 
 double x_d = 0.0;
 double y_d = 0.0;
 double z_d = 0.0;
 
-
+double kp_x = 50.0;
+double kd_x = 200.0;
+double kp_y = 50.0;
+double kd_y = 200.0;
+double kp_z = 150.0;
+double kd_z = 600.0;
 
 
 //Frame KDL::Frame::DH_Craig1989 (double a, double alpha, double d, double theta)
@@ -151,6 +151,8 @@ omni_msgs::OmniButtonEvent button;
 omni_msgs::OmniButtonEvent prev_button;
 geometry_msgs::Twist dbg;
 
+std_msgs::Bool test_start;
+
 bool autonomous_mode = false; // manual is 1 and 0 is auto
 
 void get_auto(const trajectory_msgs::JointTrajectory & _data){
@@ -173,6 +175,9 @@ void get_button(const omni_msgs::OmniButtonEvent & _data){
 		ref_change = true;
 		autonomous_mode = !autonomous_mode;
 	}		
+	if(button.white_button == 1 && prev_button.white_button == 0){
+		test_start.data = !test_start.data;
+	}		
 	prev_button = button;
 }
 
@@ -188,9 +193,15 @@ void calc_center_force(void){
 	de_y = e_y - e_y_prev;
 	de_z = e_z - e_z_prev;
 	double tau = 0.8;
-	centering_force.force.x = (KP*e_x + KD*de_x)*(1-tau) + tau*centering_force_prev.force.x;
-	centering_force.force.y = (KP*e_y + KD*de_y)*(1-tau) + tau*centering_force_prev.force.y;
-	centering_force.force.z = (KP*e_z + KD*de_z)*(1-tau) + tau*centering_force_prev.force.z;
+	if (autonomous_mode){
+		centering_force.force.x = (kp_x*e_x + kd_x*de_x)*(1-tau) + tau*centering_force_prev.force.x;
+		centering_force.force.y = (kp_y*e_y + kd_y*de_y)*(1-tau) + tau*centering_force_prev.force.y;
+        }else{
+		
+		centering_force.force.x = 0.0;
+		centering_force.force.y = 0.0;
+	}
+	centering_force.force.z = (kp_z*e_z + kd_z*de_z)*(1-tau) + tau*centering_force_prev.force.z;
 	if(ref_change){
 		ref_change = false;
 		centering_force.force.x += centering_force_prev.force.x;
@@ -253,6 +264,8 @@ int main(int argc, char * argv[]){
 
 
 	ros::Publisher control_mode_pub = nh_.advertise<std_msgs::UInt8>("iiwa/control_mode",10);
+
+	ros::Publisher test_start_pub = nh_.advertise<std_msgs::Bool>("/test_start",10);
         
        
 	ros::Publisher dbg_pub = nh_.advertise<geometry_msgs::Twist>("/hapticdbg",10);
@@ -301,6 +314,7 @@ int main(int argc, char * argv[]){
 
 	std_msgs::UInt8 control_mode;
 
+        test_start.data = false;
         while (ros::ok()){
 		if (initialized){
 			// update the joint positions with the most recent readings from the joints
@@ -326,15 +340,7 @@ int main(int argc, char * argv[]){
                                 
                             }else{
                             
-                                
-                                
-                                /*xyz.linear.x = 0.01;
-                                xyz.linear.y = -0.54;
-                                xyz.linear.z = 0.6143;
-                                xyz.angular.x = 3.1;
-                                xyz.angular.y = 0.0015;
-                                xyz.angular.z = 1.8415;
-                                */
+  
                                 ref.linear.x = xyz.linear.x - pos.pose.position.y;
                                 ref.linear.y = xyz.linear.y + pos.pose.position.x;
                                 ref.linear.z = xyz.linear.z + pos.pose.position.z*0.2;
@@ -372,6 +378,8 @@ int main(int argc, char * argv[]){
 			control_mode.data = 1;
                 dbg_pub.publish(dbg);
 		control_mode_pub.publish(control_mode);
+
+		test_start_pub.publish(test_start);
 
                 calc_center_force();
 		force_pub.publish(centering_force);
