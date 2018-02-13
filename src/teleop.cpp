@@ -79,9 +79,47 @@ KDL::Frame::DH_Craig1989(0,0,0.12597,0)));
 
 
 
+KDL::Chain PHANTOM(){
+
+  KDL::Chain chain;
+  //base
+  chain.addSegment(KDL::Segment(KDL::Joint(KDL::Joint::None),
+        KDL::Frame::DH(0,0,0,0)));
+ //joint 1
+  chain.addSegment(KDL::Segment(KDL::Joint(KDL::Joint::RotZ),
+        KDL::Frame::DH(0, M_PI_2,0,0)));
+  //joint 2
+  chain.addSegment(KDL::Segment(KDL::Joint(KDL::Joint::RotZ),
+        KDL::Frame::DH(0.1321, 0.0,0.0,0)));
+  //joint 3
+  chain.addSegment(KDL::Segment(KDL::Joint(KDL::Joint::RotZ),
+        KDL::Frame::DH(0, M_PI_2,0.0,0)));
+
+  //joint 4
+  chain.addSegment(KDL::Segment(KDL::Joint(KDL::Joint::RotZ),
+        KDL::Frame::DH(0, -M_PI_2,0.1321,0)));
+
+  //joint 5 not considering the roll angle in th stylus (last DoF) 
+  chain.addSegment(KDL::Segment(KDL::Joint(KDL::Joint::RotZ),
+        KDL::Frame::DH(0,M_PI_2,0,0)));
+  chain.addSegment(KDL::Segment(KDL::Joint(KDL::Joint::RotZ),
+        KDL::Frame::DH(0,0.0,-0.05,0)));
+   
+  
+  return chain;
+
+}
+
+
+
+
+
 //reading the kuka lwr joint positions
 sensor_msgs::JointState joints;
+sensor_msgs::JointState joints_phantom;
+
 bool initialized = false;
+bool initialized_phantom = false;
 //callback for reading joint values
 void get_joints(const sensor_msgs::JointState & data){
 	for (int i = 0; i < data.position.size();++i){
@@ -92,6 +130,17 @@ void get_joints(const sensor_msgs::JointState & data){
 		}
 	}	
 	initialized = true;
+}
+
+void get_joints_phantom(const sensor_msgs::JointState & data){
+	for (int i = 0; i < 6;++i){
+		joints_phantom.position[i] = data.position[i];	
+	}
+	//joints_phantom.position[2] -= M_PI_2; // correct the offset in reading this joint positions based on the raw sensor data
+	//joints_phantom.position[3] -= 6.29; // correct the offset in reading this joint positions based on the raw sensor data
+	joints_phantom.position[4] += 0.785398; // correct the offset in reading this joint positions based on the raw sensor data
+	initialized_phantom = true;
+	
 }
 
 
@@ -238,15 +287,28 @@ int main(int argc, char * argv[]){
 	KDL::JntArray manual_joint_cmd = KDL::JntArray(nj);
         
         
-        
+       // define the kinematic chain
+	KDL::Chain chain_phantom = PHANTOM();
+	// define the forward kinematic solver via the defined chain
+	KDL::ChainFkSolverPos_recursive fksolver_phantom = KDL::ChainFkSolverPos_recursive(chain_phantom);
+	
+
+	// get the number of joints from the chain
+	unsigned int nj_phantom = chain_phantom.getNrOfJoints();
+        // define a joint array in KDL format for the joint positions
+        KDL::JntArray jointpositions_phantom = KDL::JntArray(nj_phantom);
+        initialize_joints(jointpositions_phantom, nj_phantom, 0.2);
+        initialize_joints(joints_phantom, nj_phantom, 0.0);
     
 	ros::init(argc, argv, "tele_op");
 	ros::NodeHandle nh_;
 	ros::NodeHandle home("~");
 
 	bool semi_auto = false;
+        bool stylus_tip = false;
 	home.getParam("semi_auto",semi_auto) ;
-	
+	home.getParam("stylus_tip",stylus_tip) ;
+        
 	int loop_freq = 100;
         float dt = (float) 1/loop_freq;
 	ros::Rate loop_rate(loop_freq);	
@@ -272,6 +334,9 @@ int main(int argc, char * argv[]){
 	// subscriber for reading the joint angles from the gazebo simulator
         ros::Subscriber joints_sub = nh_.subscribe("/iiwa/joint_states",10, get_joints);
 
+        
+        ros::Subscriber joints_phantom_sub = nh_.subscribe("/phantom/joint_states",10, get_joints_phantom);
+        
         ros::Subscriber auto_sub = nh_.subscribe("/iiwa/auto/command",10, get_auto);
         
 
@@ -290,11 +355,12 @@ int main(int argc, char * argv[]){
         // define the joint names, e.g. iiwa_joint_1 up to iiwa_joint_7
 	name_joints(joint_cmd, nj);
 	
-
+        
 	initialize_joints(jointpositions, nj, 0.2);
         initialize_joints(joints, nj, 0.0);
         
 	KDL::Frame cartpos;    
+        KDL::Frame cartpos_phantom;  
         KDL::Rotation rpy = KDL::Rotation::RPY(roll,pitch,yaw); //Rotation built from Roll-Pitch-Yaw angles
 
 	KDL::Frame current_cartpos;    
@@ -304,6 +370,8 @@ int main(int argc, char * argv[]){
         joint_cmd.points.push_back(pt);
         geometry_msgs::Twist ref;
         geometry_msgs::Twist xyz;
+        geometry_msgs::Twist xyz_phantom;
+        geometry_msgs::Twist xyz_command;
         // for debugging: Calculate forward position kinematics
         bool kinematics_status;
         bool start_loc_available = false;
@@ -314,7 +382,27 @@ int main(int argc, char * argv[]){
         test_start.data = false;
         while (ros::ok()){
 		if (initialized){
-			// update the joint positions with the most recent readings from the joints
+			
+                        if(initialized_phantom){
+                            for (int k = 0; k<nj_phantom; ++k){
+                                    jointpositions_phantom(k) = joints_phantom.position[k];                                    
+                            }
+                            kinematics_status = fksolver_phantom.JntToCart(jointpositions_phantom,cartpos_phantom);
+                                if(kinematics_status>=0){
+                                    xyz_phantom.linear.x = cartpos_phantom.p[0];
+                                    xyz_phantom.linear.y = cartpos_phantom.p[1];
+                                    xyz_phantom.linear.z = cartpos_phantom.p[2];
+                                    cartpos_phantom.M.GetRPY(roll,pitch, yaw);
+                                    //dbg = xyz_phantom;
+                                    //dbg.angular.x = roll;
+                                    //dbg.angular.y = pitch;
+                                    //dbg.angular.z = yaw;
+                            }
+                            
+                        }
+                    
+                    
+                        // update the joint positions with the most recent readings from the joints
 			for (int k = 0; k<7; ++k){
 				jointpositions(k) = joints.position[k];
                                 all_zero &= (fabs(jointpositions(k)) <.01);
@@ -336,11 +424,21 @@ int main(int argc, char * argv[]){
                                 start_loc_available = true;
                                 
                             }else{
-                            
-  
-                                ref.linear.x = xyz.linear.x - pos.pose.position.y;
-                                ref.linear.y = xyz.linear.y + pos.pose.position.x;
-                                ref.linear.z = xyz.linear.z + pos.pose.position.z*0.0;
+                                double z_gain = 0.0;
+                                if(!stylus_tip){
+                                    xyz_command.linear.x = - pos.pose.position.y;
+                                    xyz_command.linear.y = pos.pose.position.x;
+                                    xyz_command.linear.z = pos.pose.position.z*z_gain;
+                                    
+                                }else{
+                                    xyz_command.linear.x = xyz_phantom.linear.x-0.15;
+                                    xyz_command.linear.y = xyz_phantom.linear.y;
+                                    xyz_command.linear.z = xyz_phantom.linear.z*z_gain;                                                                        
+                                }
+                                dbg = xyz_command;
+                                ref.linear.x = xyz.linear.x + xyz_command.linear.x;
+                                ref.linear.y = xyz.linear.y + xyz_command.linear.y;
+                                ref.linear.z = xyz.linear.z + xyz_command.linear.z;
                                 //keep the same orientation
                                 ref.angular.x = xyz.angular.x;
                                 ref.angular.y = xyz.angular.y;
@@ -362,13 +460,7 @@ int main(int argc, char * argv[]){
                                 	kinematics_status = fksolver.JntToCart(jointpositions,current_cartpos);
 					y_d = -(current_cartpos.p[0] -xyz.linear.x);
 					x_d = current_cartpos.p[1]-xyz.linear.y;
-					z_d = current_cartpos.p[2]-xyz.linear.z;
-                                        dbg.linear.x = x_d;
-                                        dbg.linear.y = pos.pose.position.x;
-                                        dbg.linear.z = ref.linear.y;
-                                        dbg.angular.x = xyz.linear.y;
-                                        dbg.angular.y = current_cartpos.p[1];
-                                    
+					z_d = current_cartpos.p[2]-xyz.linear.z;                                                            
                                 }
                                 cmd_pub.publish(joint_cmd);
                             }
@@ -379,6 +471,7 @@ int main(int argc, char * argv[]){
 			control_mode.data = 0;
 		else
 			control_mode.data = 1;
+                
                 dbg_pub.publish(dbg);
 		control_mode_pub.publish(control_mode);
 

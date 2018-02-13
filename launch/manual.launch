@@ -2,5 +2,6 @@
 	<include file = "$(find omni_common)/launch/omni_state.launch"/>
 	<node pkg = "iros18_manual" type="iros18_manual_teleop" name= "tele_op" required = "true">
 		<param name ="semi_auto" value = "true"/>
+		<param name ="stylus_tip" value = "true"/>
 	</node>
 </launch>
