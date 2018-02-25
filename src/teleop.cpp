@@ -328,6 +328,8 @@ int main(int argc, char * argv[]){
         
        
 	ros::Publisher dbg_pub = nh_.advertise<geometry_msgs::Twist>("/hapticdbg",10);
+        
+        ros::Publisher manual_commands_pub = nh_.advertise<geometry_msgs::Twist>("/manual_commands",10);
 
 	
 
@@ -372,6 +374,7 @@ int main(int argc, char * argv[]){
         geometry_msgs::Twist xyz;
         geometry_msgs::Twist xyz_phantom;
         geometry_msgs::Twist xyz_command;
+        
         // for debugging: Calculate forward position kinematics
         bool kinematics_status;
         bool start_loc_available = false;
@@ -471,6 +474,7 @@ int main(int argc, char * argv[]){
 			control_mode.data = 0;
 		else
 			control_mode.data = 1;
+                manual_commands_pub.publish(ref);
                 
                 dbg_pub.publish(dbg);
 		control_mode_pub.publish(control_mode);
