@@ -21,6 +21,7 @@
 #include<std_msgs/UInt8.h>
 #include<std_msgs/Bool.h>
 
+
 #include <kdl/chainfksolver.hpp>
 #include <kdl/chainiksolver.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
@@ -344,6 +345,8 @@ int main(int argc, char * argv[]){
 	int loop_freq = 100;
         float dt = (float) 1/loop_freq;
 	ros::Rate loop_rate(loop_freq);	
+        
+       
 
 	ros::Publisher force_pub =nh_.advertise<omni_msgs::OmniFeedback>("/phantom/force_feedback",10);
         
@@ -385,6 +388,7 @@ int main(int argc, char * argv[]){
 	
 	
 	double roll, pitch, yaw, x, y, z;
+        double roll_phantom, pitch_phantom, yaw_phantom;
         
         // define the joint names, e.g. iiwa_joint_1 up to iiwa_joint_7
 	name_joints(joint_cmd, nj);
@@ -413,10 +417,11 @@ int main(int argc, char * argv[]){
         bool all_zero = true;
 
 	std_msgs::UInt8 control_mode;
-
+        tf::Transform inv_transform;
         test_start.data = false;
         while (ros::ok()){
-		if (initialized_kuka){
+               
+                if (initialized_kuka){
 			
                         if(initialized_phantom){
                             for (int k = 0; k<nj_phantom; ++k){
@@ -427,8 +432,12 @@ int main(int argc, char * argv[]){
                                     xyz_phantom.linear.x = cartpos_phantom.p[0];
                                     xyz_phantom.linear.y = cartpos_phantom.p[1];
                                     xyz_phantom.linear.z = cartpos_phantom.p[2];
-                                    cartpos_phantom.M.GetRPY(roll,pitch, yaw);
-                                    //dbg = xyz_phantom;
+                                    cartpos_phantom.M.GetRPY(roll_phantom,pitch_phantom, yaw_phantom);
+                                    xyz_phantom.angular.x = roll_phantom;
+                                    xyz_phantom.angular.y = pitch_phantom;
+                                    xyz_phantom.angular.z = yaw_phantom;
+                                    
+                                    dbg = xyz_phantom;
                                     //dbg.angular.x = roll;
                                     //dbg.angular.y = pitch;
                                     //dbg.angular.z = yaw;
@@ -469,17 +478,29 @@ int main(int argc, char * argv[]){
                                 }else{
                                     xyz_command.linear.x = xyz_phantom.linear.x-0.15;
                                     xyz_command.linear.y = xyz_phantom.linear.y;
-                                    xyz_command.linear.z = xyz_phantom.linear.z*z_gain;                                                                        
+                                    xyz_command.linear.z = xyz_phantom.linear.z*z_gain;
+                                    xyz_command.angular.x = xyz_phantom.angular.x*0.0; 
+                                    xyz_command.angular.y = xyz_phantom.angular.y*0.0; 
+                                    xyz_command.angular.z = xyz_phantom.angular.z*0.0; 
+                                    
                                 }
                                 dbg = xyz_command;
+                                
+                                
                                 ref.linear.x = xyz.linear.x + xyz_command.linear.x;
                                 ref.linear.y = xyz.linear.y + xyz_command.linear.y;
                                 //ref.linear.z = xyz.linear.z + xyz_command.linear.z;
+                                
+                                
+                                
                                 ref.linear.z = 0.6715;
                                 //keep the same orientation
                                 ref.angular.x = xyz.angular.x;
                                 ref.angular.y = xyz.angular.y;
                                 ref.angular.z = xyz.angular.z;
+                                
+                                
+                                
                                 // update the reference cartesian positions
                                 cartpos.p[0]=ref.linear.x;
                                 cartpos.p[1]=ref.linear.y;

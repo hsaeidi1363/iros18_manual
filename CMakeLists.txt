@@ -17,6 +17,7 @@ find_package(catkin REQUIRED COMPONENTS
   trajectory_msgs
   iiwa_msgs
   roslib
+  tf
 )
 find_package( Eigen3 REQUIRED )
 find_package( orocos_kdl REQUIRED )
