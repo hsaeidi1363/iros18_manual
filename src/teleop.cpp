@@ -1,3 +1,14 @@
+/*
+ * This code was developed for the manual and semi-autonomous control modes of the confidence-based control strategy of IROS 2018 submission
+ * for cutting circular patterns. The code reads the initial position of the kuka arm and uses it as a reference for sending X-Y-Z control commands
+ * from the readings of the stylus endtip on the haptic device. It also applies a force feedback on the Z axis to keep a correct height for
+ * device during the tests. Once the robot is switched to the autonomous mode, an X-Y-Z force feedback controls the position of the haptic
+ * device to follow and match the robot positions. This is important because once the operator returns back to the loop via the manual mode,
+ * they should continue controlling the robot from the same positions that the autonomous controller was de-activated. 
+ * 
+ */
+
+
 #include<ros/ros.h>
 #include<omni_msgs/OmniFeedback.h>
 #include<omni_msgs/OmniButtonEvent.h>
@@ -20,11 +31,12 @@
 
 
 
-
+// desired values of x, y, z for centering the haptic device
 double x_d = 0.0;
 double y_d = 0.0;
 double z_d = 0.0;
 
+// proportional and derivate control gains for the x,y,z axis of the haptic device when tracking a certain reference position of the robot or centering them
 double kp_x = 100.0;
 double kd_x = 300.0;
 double kp_y = 100.0;
@@ -33,8 +45,8 @@ double kp_z = 150.0;
 double kd_z = 600.0;
 
 
+// defining the kinematic chain of robot for sending the control commands to the robot
 //Frame KDL::Frame::DH_Craig1989 (double a, double alpha, double d, double theta)
-
 KDL::Chain LWR(){
 
   KDL::Chain chain;
@@ -78,7 +90,8 @@ KDL::Frame::DH_Craig1989(0,0,0.12597,0)));
 }
 
 
-
+//defining the kinematic chain of the phantom device for reading the end tip position and orientation of the stylus since they are not 
+//directly available from the ROS drivers
 KDL::Chain PHANTOM(){
 
   KDL::Chain chain;
@@ -98,7 +111,6 @@ KDL::Chain PHANTOM(){
   //joint 4
   chain.addSegment(KDL::Segment(KDL::Joint(KDL::Joint::RotZ),
         KDL::Frame::DH(0, -M_PI_2,0.1321,0)));
-
   //joint 5 not considering the roll angle in th stylus (last DoF) 
   chain.addSegment(KDL::Segment(KDL::Joint(KDL::Joint::RotZ),
         KDL::Frame::DH(0,M_PI_2,0,0)));
@@ -115,21 +127,23 @@ KDL::Chain PHANTOM(){
 
 
 //reading the kuka lwr joint positions
-sensor_msgs::JointState joints;
+sensor_msgs::JointState joints_kuka;
+//reading the phantom joint positions
 sensor_msgs::JointState joints_phantom;
 
-bool initialized = false;
+bool initialized_kuka = false;
 bool initialized_phantom = false;
+
 //callback for reading joint values
-void get_joints(const sensor_msgs::JointState & data){
+void get_joints_kuka(const sensor_msgs::JointState & data){
 	for (int i = 0; i < data.position.size();++i){
 		// if this is not the first time the callback function is read, obtain the joint positions
-		if(initialized){
-			joints.position[i] = data.position[i];	
+		if(initialized_kuka){
+			joints_kuka.position[i] = data.position[i];	
 		// otherwise initilize them with 0.0 values
 		}
 	}	
-	initialized = true;
+	initialized_kuka = true;
 }
 
 void get_joints_phantom(const sensor_msgs::JointState & data){
@@ -189,41 +203,53 @@ void eval_points(trajectory_msgs::JointTrajectoryPoint & _point, KDL::JntArray &
 
 
 
-
+// autonomous control command variable
 trajectory_msgs::JointTrajectory auto_cmd;
 
 geometry_msgs::PoseStamped pos;
+// current and previous centering forces for the haptic device
 omni_msgs::OmniFeedback centering_force;
 omni_msgs::OmniFeedback centering_force_prev;
 
+// current and previous readings of the haptic device buttons
 omni_msgs::OmniButtonEvent button;
 omni_msgs::OmniButtonEvent prev_button;
+
+//debugging variable
 geometry_msgs::Twist dbg;
 
 std_msgs::Bool test_start;
 
 bool autonomous_mode = false; // manual is 1 and 0 is auto
 
+
+//read the autonomous control command
 void get_auto(const trajectory_msgs::JointTrajectory & _data){
 	auto_cmd = _data;
 }
+
 
 void get_pos(const geometry_msgs::PoseStamped & _data){
 	pos = _data;
 
 }
 
+// variable for tracking if the reference position of the haptic devices has changed
 bool ref_change = false;
+
+
 
 void get_button(const omni_msgs::OmniButtonEvent & _data){
 	button = _data;
-	if(button.grey_button == 1 && prev_button.grey_button == 0){
+        // check if the control mode has changed via the grey button
+        if(button.grey_button == 1 && prev_button.grey_button == 0){
 		//x_d =  pos.pose.position.x; 
 		//y_d =  pos.pose.position.y; 
 		//z_d =  pos.pose.position.z; 
 		ref_change = true;
 		autonomous_mode = !autonomous_mode;
 	}		
+        // check if the test has started via the white button
 	if(button.white_button == 1 && prev_button.white_button == 0){
 		test_start.data = !test_start.data;
 	}		
@@ -233,25 +259,31 @@ void get_button(const omni_msgs::OmniButtonEvent & _data){
 double e_x_prev = 0.0, e_y_prev = 0.0, e_z_prev = 0.0;
 
 
+//PD tracker for the position of the haptic device
 void calc_center_force(void){
 	double e_x, e_y, e_z, de_x, de_y, de_z;
-	e_x = x_d - pos.pose.position.x; 
+	//calculate the error
+        e_x = x_d - pos.pose.position.x; 
 	e_y = y_d - pos.pose.position.y; 
 	e_z = z_d - pos.pose.position.z; 
-	de_x = e_x - e_x_prev;
+        //calculate the derivatives of the errors
+        de_x = e_x - e_x_prev;
 	de_y = e_y - e_y_prev;
 	de_z = e_z - e_z_prev;
+        //low pass filter for reducing the noise and jerks in the forces
 	double tau = 0.8;
 	if (autonomous_mode){
+                // apply the tracking forces for the position of the haptic device under autonomous mode 
 		centering_force.force.x = (kp_x*e_x + kd_x*de_x)*(1-tau) + tau*centering_force_prev.force.x;
 		centering_force.force.y = (kp_y*e_y + kd_y*de_y)*(1-tau) + tau*centering_force_prev.force.y;
         }else{
-		
+		//otherwise not force on x-y is necessary
 		centering_force.force.x = 0.0;
 		centering_force.force.y = 0.0;
 	}
 	centering_force.force.z = (kp_z*e_z + kd_z*de_z)*(1-tau) + tau*centering_force_prev.force.z;
-	if(ref_change){
+	// reduce the kicks by resetting th force feedbacks when the reference changes
+        if(ref_change){
 		ref_change = false;
 		centering_force.force.x += centering_force_prev.force.x;
 		centering_force.force.y += centering_force_prev.force.y;
@@ -269,7 +301,7 @@ int main(int argc, char * argv[]){
     
     
     
-    // define the kinematic chain
+        // define the kinematic chain
 	KDL::Chain chain = LWR();
 	// define the forward kinematic solver via the defined chain
 	KDL::ChainFkSolverPos_recursive fksolver = KDL::ChainFkSolverPos_recursive(chain);
@@ -315,7 +347,7 @@ int main(int argc, char * argv[]){
 
 	ros::Publisher force_pub =nh_.advertise<omni_msgs::OmniFeedback>("/phantom/force_feedback",10);
         
-        // defining the puilsher that accepts joint position commands and applies them to the simulator
+        // defining the puilsher that accepts joint position commands and applies them to the simulator or real robot
 	std::string command_topic = "iiwa/PositionJointInterface_trajectory_controller/command";
 
 
@@ -334,7 +366,7 @@ int main(int argc, char * argv[]){
 	
 
 	// subscriber for reading the joint angles from the gazebo simulator
-        ros::Subscriber joints_sub = nh_.subscribe("/iiwa/joint_states",10, get_joints);
+        ros::Subscriber joints_kuka_sub = nh_.subscribe("/iiwa/joint_states",10, get_joints_kuka);
 
         
         ros::Subscriber joints_phantom_sub = nh_.subscribe("/phantom/joint_states",10, get_joints_phantom);
@@ -347,10 +379,10 @@ int main(int argc, char * argv[]){
 	ros::Subscriber button_sub = nh_.subscribe("/phantom/button",10, get_button);
 
         trajectory_msgs::JointTrajectory joint_cmd;
-	trajectory_msgs::JointTrajectoryPoint pt,pt2;
+	trajectory_msgs::JointTrajectoryPoint pt;
 
 	initialize_points(pt,nj,0.0);
-	initialize_points(pt2,nj,0.0);
+	
 	
 	double roll, pitch, yaw, x, y, z;
         
@@ -359,7 +391,7 @@ int main(int argc, char * argv[]){
 	
         
 	initialize_joints(jointpositions, nj, 0.2);
-        initialize_joints(joints, nj, 0.0);
+        initialize_joints(joints_kuka, nj, 0.0);
         
 	KDL::Frame cartpos;    
         KDL::Frame cartpos_phantom;  
@@ -384,7 +416,7 @@ int main(int argc, char * argv[]){
 
         test_start.data = false;
         while (ros::ok()){
-		if (initialized){
+		if (initialized_kuka){
 			
                         if(initialized_phantom){
                             for (int k = 0; k<nj_phantom; ++k){
@@ -407,12 +439,12 @@ int main(int argc, char * argv[]){
                     
                         // update the joint positions with the most recent readings from the joints
 			for (int k = 0; k<7; ++k){
-				jointpositions(k) = joints.position[k];
+				jointpositions(k) = joints_kuka.position[k];
                                 all_zero &= (fabs(jointpositions(k)) <.01);
                                     
 			}				
                         if(!all_zero){
-                        //find where the robot is
+                        //find where the robot is initially
                             if(!start_loc_available){
                                 kinematics_status = fksolver.JntToCart(jointpositions,cartpos);
                                 if(kinematics_status>=0){
@@ -428,6 +460,7 @@ int main(int argc, char * argv[]){
                                 
                             }else{
                                 double z_gain = 0.0;
+                                // if the positions are read from the ROS driver directly
                                 if(!stylus_tip){
                                     xyz_command.linear.x = - pos.pose.position.y;
                                     xyz_command.linear.y = pos.pose.position.x;
@@ -441,7 +474,8 @@ int main(int argc, char * argv[]){
                                 dbg = xyz_command;
                                 ref.linear.x = xyz.linear.x + xyz_command.linear.x;
                                 ref.linear.y = xyz.linear.y + xyz_command.linear.y;
-                                ref.linear.z = xyz.linear.z + xyz_command.linear.z;
+                                //ref.linear.z = xyz.linear.z + xyz_command.linear.z;
+                                ref.linear.z = 0.6715;
                                 //keep the same orientation
                                 ref.angular.x = xyz.angular.x;
                                 ref.angular.y = xyz.angular.y;
